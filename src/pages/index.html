@@ -2,43 +2,39 @@
 <html>
   <head>
     <title>Thumbnail Service</title>
+    <script src="https://unpkg.com/htmx.org@1.9.11"></script>
   </head>
   <body>
     <h1>Welcome to the Thumbnail Service</h1>
-    <div id="thumbnails"></div>
-
+    <div id="thumbnails" hx-get="/images-html" hx-trigger="load">
+      <span class="htmlx-indicator"></span>
+    </div>
     <hr/>
 
-    <form method="post" action="/search">
-      <input type="text" name="tags" value="" placeholder="Tags" />
-      <input type="submit" value="Search"/>
-    </form>
+    <div>
+      <input 
+        type="text" 
+        name="tags" 
+        placeholder="Enter tags to search..."
+        hx-post="/search"
+        hx-trigger="input changed delay:500ms, search"
+        hx-target="#thumbnails"
+      />
+    </div>
 
     </hr>
 
     <h2>Add an Image</h2>
-    <form method="post" action="/upload" enctype="multipart/form-data">
+    <form 
+      hx-trigger="submit"
+      hx-post="/upload" 
+      hx-target="#thumbnails"
+      hx-swap="beforeend"
+      enctype="multipart/form-data"
+    >
       <input type="text" name="tags" value="" placeholder="Tags" />
       <input type="file" name="image" /> 
-      <input type="submit" value="Upload New Image"/>
+      <button type="submit">Upload</button>
     </form>
-
-    <script>
-        async function getImages() {
-          const response = await fetch("/images");
-          const images = await response.json();
-
-          let html = "";
-          for (let i=0; i < images.length; i++) {
-            html += "<div>" + images[i].tags + "<br/>";
-            html += "<a href=\"/image/" + images[i].id + "\">";
-            html += "<img src=\"/thumb/" + images[i].id + "\">";
-            html += "</a></div>";
-          }
-          document.getElementById("thumbnails").innerHTML = html;
-        }
-
-        getImages();
-    </script>
   </body>
 </html>

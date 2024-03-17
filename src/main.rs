@@ -20,6 +20,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/image/:id", get(get_image))
         .route("/thumb/:id", get(get_thumbnail))
         .route("/images", get(list_images))
+        .route("/images-html", get(render_images))
         .route("/image-count", get(image_count_page))
         .route("/search", post(search_images))
         .layer(Extension(pool));
@@ -160,21 +161,22 @@ async fn uploader(
         }
     }
 
+    let p = std::path::Path::new("src/pages/thumbnail.html");
+    let mut template = tokio::fs::read_to_string(p).await.unwrap();
+
     if let (Some(tags), Some(image)) = (tags, image) {
         // TODO: Return response header instead on failure rather than erroring out.
         let image_id = store_image_to_database(&pool, &tags).await.unwrap();
         save_image(image_id, &image).await.unwrap();
-        tokio::task::spawn_blocking(move || {
-            make_thumbnail(image_id).unwrap(); // TODO Handle Error.
-        });
+        make_thumbnail(image_id).await.unwrap();
+
+        template = template.replace("{tags}", &tags);
+        template = template.replace("{id}", &image_id.to_string());
     } else {
         panic!("Missing field"); // TODO: Handle Error. -> Return 400 Bad Request
     }
 
-    let path = std::path::Path::new("src/pages/redirect.html");
-    let content = tokio::fs::read_to_string(path).await.unwrap();
-
-    Html(content)
+    Html(template.to_string())
 }
 
 async fn fill_missing_thumbnails(pool: &Pool<Sqlite>) -> anyhow::Result<()> {
@@ -184,14 +186,14 @@ async fn fill_missing_thumbnails(pool: &Pool<Sqlite>) -> anyhow::Result<()> {
         let id = row.get::<i64, _>(0);
         let thumbnail_path = format!("images/{id}_thumb.jpg");
         if !std::path::Path::new(&thumbnail_path).exists() {
-            tokio::task::spawn_blocking(move || make_thumbnail(id)).await??;
+            make_thumbnail(id).await?;
         }
     }
 
     Ok(())
 }
 
-fn make_thumbnail(id: i64) -> anyhow::Result<()> {
+async fn make_thumbnail(id: i64) -> anyhow::Result<()> {
     let image_path = format!("images/{id}.jpg");
     let thumbnail_path = format!("images/{id}_thumb.jpg");
     let image_bytes: Vec<u8> = std::fs::read(image_path)?;
@@ -222,6 +224,27 @@ async fn list_images(Extension(pool): Extension<sqlx::SqlitePool>) -> Json<Vec<I
         .into()
 }
 
+async fn render_images(Extension(pool): Extension<sqlx::SqlitePool>) -> Html<String> {
+    let images = sqlx::query_as::<_, ImageRecord>("SELECT id, tags FROM images ORDER BY id")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+    let p = std::path::Path::new("src/pages/thumbnail.html");
+    let template = tokio::fs::read_to_string(p).await.unwrap();
+
+    let mut image_html = String::new();
+    for image in images {
+        let mut _tmp = template.clone();
+        _tmp = _tmp.replace("{tags}", &image.tags);
+        _tmp = _tmp.replace("{id}", &image.id.to_string());
+
+        image_html.push_str(&_tmp);
+    }
+
+    Html(image_html.to_string())
+}
+
 #[derive(Deserialize)]
 struct Search {
     tags: String,
@@ -233,7 +256,7 @@ async fn search_images(
 ) -> Html<String> {
     let tag = format!("%{}%", form.tags);
 
-    let rows = sqlx::query_as::<_, ImageRecord>(
+    let images = sqlx::query_as::<_, ImageRecord>(
         "SELECT id, tags FROM images WHERE tags LIKE ? ORDER BY id",
     )
     .bind(tag)
@@ -241,17 +264,17 @@ async fn search_images(
     .await
     .unwrap();
 
-    let mut results = String::new();
-    for row in rows {
-        results.push_str(&format!(
-            "<a href='image/{}'><img src='/thumb/{}'/></a><br/>",
-            row.id, row.id
-        ));
+    let p = std::path::Path::new("src/pages/thumbnail.html");
+    let template = tokio::fs::read_to_string(p).await.unwrap();
+
+    let mut image_html = String::new();
+    for image in images {
+        let mut _tmp = template.clone();
+        _tmp = _tmp.replace("{tags}", &image.tags);
+        _tmp = _tmp.replace("{id}", &image.id.to_string());
+
+        image_html.push_str(&_tmp);
     }
 
-    let path = std::path::Path::new("src/pages/search.html");
-    let mut content = tokio::fs::read_to_string(path).await.unwrap();
-    content = content.replace("{results}", &results);
-
-    Html(content)
+    Html(image_html.to_string())
 }
